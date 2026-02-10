@@ -6,6 +6,7 @@
 import asyncio
 from typing import Dict, Optional
 import logging
+from database import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -31,26 +32,34 @@ class SessionManager:
         """
         if user_id not in self.sessions:
             logger.info(f"[会话管理器] 为用户 {user_id} 创建新会话")
-            await self._create_session(user_id)
+            session_id = await self._create_session(user_id)
+            # 保存会话到数据库
+            db_manager.save_user_session(user_id, session_id)
         else:
             logger.info(f"[会话管理器] 用户 {user_id} 会话已存在，复用现有会话")
 
         return self.sessions[user_id]
 
-    async def _create_session(self, user_id: str):
+    async def _create_session(self, user_id: str) -> str:
         """
         创建新的用户会话
 
         Args:
             user_id: 用户 ID
+
+        Returns:
+            会话 ID
         """
         try:
             # 延迟导入，避免循环依赖
             from iflow_sdk import IFlowClient, IFlowOptions
 
+            # 生成会话 ID
+            session_id = f"wecom_user_{user_id}"
+
             # 为每个用户创建独立的会话配置
             options = IFlowOptions(
-                session_id=f"wecom_user_{user_id}",
+                session_id=session_id,
                 auto_start_process=True
             )
 
@@ -58,7 +67,9 @@ class SessionManager:
             client = IFlowClient(options)
             self.sessions[user_id] = client
 
-            logger.info(f"[会话管理器] 用户 {user_id} 会话创建成功")
+            logger.info(f"[会话管理器] 用户 {user_id} 会话创建成功，session_id: {session_id}")
+
+            return session_id
 
         except Exception as e:
             logger.error(f"[会话管理器] 创建用户 {user_id} 会话失败: {e}")
