@@ -31,21 +31,29 @@ class SessionManager:
             IFlowClient 实例
         """
         if user_id not in self.sessions:
-            logger.info(f"[会话管理器] 为用户 {user_id} 创建新会话")
-            session_id = await self._create_session(user_id)
-            # 保存会话到数据库
-            db_manager.save_user_session(user_id, session_id)
+            # 先从数据库查找已有的 session_id
+            existing_session_id = db_manager.get_user_session(user_id)
+            
+            if existing_session_id:
+                logger.info(f"[会话管理器] 为用户 {user_id} 恢复历史会话: {existing_session_id}")
+                session_id = await self._create_session(user_id, existing_session_id)
+            else:
+                logger.info(f"[会话管理器] 为用户 {user_id} 创建新会话")
+                session_id = await self._create_session(user_id)
+                # 保存会话到数据库
+                db_manager.save_user_session(user_id, session_id)
         else:
             logger.info(f"[会话管理器] 用户 {user_id} 会话已存在，复用现有会话")
 
         return self.sessions[user_id]
 
-    async def _create_session(self, user_id: str) -> str:
+    async def _create_session(self, user_id: str, session_id: str = None) -> str:
         """
         创建新的用户会话
 
         Args:
             user_id: 用户 ID
+            session_id: 可选的会话 ID，如果不提供则生成新的
 
         Returns:
             会话 ID
@@ -54,8 +62,9 @@ class SessionManager:
             # 延迟导入，避免循环依赖
             from iflow_sdk import IFlowClient, IFlowOptions
 
-            # 生成会话 ID
-            session_id = f"wecom_user_{user_id}"
+            # 使用提供的 session_id 或生成新的
+            if session_id is None:
+                session_id = f"wecom_user_{user_id}"
 
             # 为每个用户创建独立的会话配置
             options = IFlowOptions(
