@@ -25,6 +25,7 @@ Thumbs.db
 # Logs
 *.log
 output.log
+app_error.log
 
 # 配置（包含敏感信息）
 config.py
@@ -33,6 +34,16 @@ config.py
 *.db
 *.sqlite
 *.sqlite3
+wecom_bot.db
 
 # 会话文件
 *.session
+
+# 下载文件
+downloads/
+
+# 测试文件
+test_*.py
+!test_session_memory.py
+!test_file_processing.py
+!test_file_workflow.py

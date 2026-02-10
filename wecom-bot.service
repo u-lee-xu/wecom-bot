@@ -1,0 +1,17 @@
+[Unit]
+Description=Enterprise WeChat Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/wecom
+Environment="PATH=/home/pi/wecom/venv/bin"
+ExecStart=/home/pi/wecom/venv/bin/python app.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/pi/wecom/app.log
+StandardError=append:/home/pi/wecom/app_error.log
+
+[Install]
+WantedBy=multi-user.target
