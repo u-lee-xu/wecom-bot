@@ -10,6 +10,8 @@ import asyncio
 from session_manager import session_manager
 from database import db_manager
 from rate_limiter import rate_limiter
+from file_downloader import file_downloader
+from file_processor import file_processor
 import logging
 
 # 配置日志
@@ -137,10 +139,32 @@ def receive_message():
                 # 记录图片消息
                 db_manager.log_message(user_id, "image_message", f"图片: {image_url}")
 
-                # 发送图片处理提示
+                # 下载并处理图片
                 async def process_image():
-                    error_message = "收到图片！我暂时无法直接查看图片内容，但我可以帮你分析图片中的信息。"
-                    await send_reply_to_wecom(response_url, error_message)
+                    try:
+                        # 发送处理中的提示
+                        await send_reply_to_wecom(response_url, "收到图片！正在处理中...")
+
+                        # 下载图片
+                        downloaded_path = file_downloader.download_file(image_url)
+                        if downloaded_path:
+                            # 处理图片
+                            result = await file_processor.process_file(downloaded_path, "image")
+
+                            if result['success']:
+                                # 发送图片内容给 iFlow CLI 处理
+                                await process_message_async(user_id, result['content'], response_url)
+                            else:
+                                await send_reply_to_wecom(response_url, f"处理图片失败: {result['content']}")
+
+                            # 清理下载的文件
+                            file_downloader.cleanup_file(downloaded_path)
+                        else:
+                            await send_reply_to_wecom(response_url, "下载图片失败，请稍后重试。")
+
+                    except Exception as e:
+                        logger.error(f"[图片处理] 异常: {e}")
+                        await send_reply_to_wecom(response_url, f"处理图片时出错: {str(e)}")
 
                 asyncio.run(process_image())
 
@@ -153,10 +177,32 @@ def receive_message():
                 # 记录文件消息
                 db_manager.log_message(user_id, "file_message", f"文件: {file_url}")
 
-                # 发送文件处理提示
+                # 下载并处理文件
                 async def process_file():
-                    error_message = "收到文件！我暂时无法直接查看文件内容，但我可以帮你处理文件。"
-                    await send_reply_to_wecom(response_url, error_message)
+                    try:
+                        # 发送处理中的提示
+                        await send_reply_to_wecom(response_url, "收到文件！正在处理中...")
+
+                        # 下载文件
+                        downloaded_path = file_downloader.download_file(file_url)
+                        if downloaded_path:
+                            # 处理文件
+                            result = await file_processor.process_file(downloaded_path, "file")
+
+                            if result['success']:
+                                # 发送文件内容给 iFlow CLI 处理
+                                await process_message_async(user_id, result['content'], response_url)
+                            else:
+                                await send_reply_to_wecom(response_url, f"处理文件失败: {result['content']}")
+
+                            # 清理下载的文件
+                            file_downloader.cleanup_file(downloaded_path)
+                        else:
+                            await send_reply_to_wecom(response_url, "下载文件失败，请稍后重试。")
+
+                    except Exception as e:
+                        logger.error(f"[文件处理] 异常: {e}")
+                        await send_reply_to_wecom(response_url, f"处理文件时出错: {str(e)}")
 
                 asyncio.run(process_file())
 
