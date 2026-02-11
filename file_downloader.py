@@ -9,6 +9,7 @@ from Crypto.Cipher import AES
 import logging
 from typing import Optional
 import uuid
+from WXBizJsonMsgCrypt import Prpcrypt
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,8 @@ class FileDownloader:
                 # - 图片旧格式: f6 4d 2a 28
                 # - 文件旧格式: 7b 1a 7a 03
                 # - 图片新格式: 17 ef 79 e9
-                if first_4_bytes == b'\xf6\x4d\x2a\x28' or first_4_bytes == b'\x7b\x1a\x7a\x03' or first_4_bytes == b'\x17\xef\x79\xe9':
+                # - 图片最新格式: 37 6a bc 6a
+                if first_4_bytes == b'\xf6\x4d\x2a\x28' or first_4_bytes == b'\x7b\x1a\x7a\x03' or first_4_bytes == b'\x17\xef\x79\xe9' or first_4_bytes == b'\x37\x6a\xbc\x6a':
                     logger.info(f"[文件下载器] 检测到加密文件，尝试解密: {first_4_bytes.hex()}")
 
                     if aes_key_base64:
@@ -190,6 +192,7 @@ class FileDownloader:
     def decrypt_file(self, file_path: str, aes_key_base64: str) -> Optional[str]:
         """
         解密加密的图片文件（企业微信图片需要解密）
+        使用企业微信官方库的解密算法
 
         Args:
             file_path: 加密的文件路径
@@ -205,31 +208,58 @@ class FileDownloader:
             with open(file_path, 'rb') as f:
                 encrypted_data = f.read()
 
+            # 使用企业微信官方库的 Prpcrypt 类进行解密
+            # 企业微信文件加密：纯文件内容 + PKCS#7 填充
+            # 与消息加密不同，文件加密没有 random、msg_len、receiveid 封装
+
             # Base64解码密钥
             aes_key = base64.b64decode(aes_key_base64 + "=" * (-len(aes_key_base64) % 4))
             if len(aes_key) != 32:
                 raise ValueError("无效的AES密钥长度: 应为32字节")
 
-            # IV 为密钥前16字节
-            iv = aes_key[:16]
+            # 使用 Prpcrypt 进行解密（企业微信官方算法）
+            prpcrypt = Prpcrypt(aes_key)
+            
+            # 直接调用 AES-CBC 解密（不使用 Prpcrypt.decrypt，因为文件没有消息体封装）
+            cryptor = AES.new(aes_key, AES.MODE_CBC, aes_key[:16])
+            decrypted_data = cryptor.decrypt(encrypted_data)
 
-            # 解密
-            cipher = AES.new(aes_key, AES.MODE_CBC, iv)
-            decrypted_data = cipher.decrypt(encrypted_data)
-
-            # 去除 PKCS#7 填充
+            # 去除 PKCS#7 填充（与官方库相同的处理方式）
             pad_len = decrypted_data[-1]
             if pad_len > 32:
                 raise ValueError("无效的填充长度")
 
             decrypted_data = decrypted_data[:-pad_len]
 
+            # 根据文件头确定正确的扩展名
+            # 常见文件魔数：
+            # - JPEG: ffd8 ff
+            # - PNG: 89 50 4e 47
+            # - GIF: 47 49 46 38
+            # - PDF: 25 50 44 46
+            file_ext_map = {
+                b'\xff\xd8\xff': '.jpg',
+                b'\x89PNG': '.png',
+                b'GIF8': '.gif',
+                b'%PDF': '.pdf',
+            }
+            
+            new_ext = None
+            for magic, ext in file_ext_map.items():
+                if decrypted_data.startswith(magic):
+                    new_ext = ext
+                    break
+            
+            # 如果无法识别，使用原扩展名
+            if new_ext is None:
+                new_ext = os.path.splitext(file_path)[1]
+
             # 保存解密后的文件
-            original_filename = os.path.splitext(file_path)[0] + "_decrypted" + os.path.splitext(file_path)[1]
+            original_filename = os.path.splitext(file_path)[0] + "_decrypted" + new_ext
             with open(original_filename, 'wb') as f:
                 f.write(decrypted_data)
 
-            logger.info(f"[文件下载器] 文件解密成功: {original_filename}")
+            logger.info(f"[文件下载器] 文件解密成功: {original_filename} (检测到扩展名: {new_ext})")
             return original_filename
 
         except Exception as e:
