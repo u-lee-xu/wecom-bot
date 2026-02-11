@@ -19,6 +19,8 @@ class SessionManager:
         self.sessions: Dict[str, object] = {}
         # 用户 ID 到会话配置的映射
         self.session_configs: Dict[str, dict] = {}
+        # 用户 ID 到最近文件路径的映射
+        self.user_files: Dict[str, dict] = {}
 
     async def get_or_create_session(self, user_id: str) -> object:
         """
@@ -74,6 +76,10 @@ class SessionManager:
 
             # 创建 IFlowClient 实例
             client = IFlowClient(options)
+            
+            # 建立连接
+            await client.connect()
+            
             self.sessions[user_id] = client
 
             logger.info(f"[会话管理器] 用户 {user_id} 会话创建成功，session_id: {session_id}")
@@ -83,6 +89,48 @@ class SessionManager:
         except Exception as e:
             logger.error(f"[会话管理器] 创建用户 {user_id} 会话失败: {e}")
             raise
+
+    def save_user_file(self, user_id: str, file_type: str, file_path: str, original_filename: str = ""):
+        """
+        保存用户最近发送的文件信息
+
+        Args:
+            user_id: 用户 ID
+            file_type: 文件类型（image/file）
+            file_path: 文件路径
+            original_filename: 原始文件名
+        """
+        import time
+        self.user_files[user_id] = {
+            'type': file_type,
+            'path': file_path,
+            'filename': original_filename,
+            'timestamp': int(time.time())
+        }
+        logger.info(f"[会话管理器] 用户 {user_id} 文件已保存: {file_type} - {file_path}")
+
+    def get_user_file(self, user_id: str) -> Optional[dict]:
+        """
+        获取用户最近发送的文件信息
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            文件信息字典，如果没有则返回 None
+        """
+        return self.user_files.get(user_id)
+
+    def clear_user_file(self, user_id: str):
+        """
+        清除用户的文件信息
+
+        Args:
+            user_id: 用户 ID
+        """
+        if user_id in self.user_files:
+            del self.user_files[user_id]
+            logger.info(f"[会话管理器] 用户 {user_id} 文件信息已清除")
 
     async def close_session(self, user_id: str):
         """
@@ -98,6 +146,8 @@ class SessionManager:
                 if hasattr(client, '__aexit__'):
                     await client.__aexit__(None, None, None)
                 del self.sessions[user_id]
+                # 清除文件信息
+                self.clear_user_file(user_id)
                 logger.info(f"[会话管理器] 用户 {user_id} 会话已关闭")
             except Exception as e:
                 logger.error(f"[会话管理器] 关闭用户 {user_id} 会话失败: {e}")
