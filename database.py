@@ -248,8 +248,9 @@ class DatabaseManager:
                 if '_decrypted' in hash_filename:
                     file_path = os.path.join(user_files_dir, hash_filename)
                 else:
-                    # 检查是否存在解密版本
-                    decrypted_path = os.path.join(user_files_dir, hash_filename.replace(os.path.splitext(hash_filename)[0], os.path.splitext(hash_filename)[0] + '_decrypted' + os.path.splitext(hash_filename)[1]))
+                    # 检查是否存在解密版本（原始哈希 + _decrypted + 扩展名）
+                    name, ext = os.path.splitext(hash_filename)
+                    decrypted_path = os.path.join(user_files_dir, f"{name}_decrypted{ext}")
                     if os.path.exists(decrypted_path):
                         file_path = decrypted_path
                     else:

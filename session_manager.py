@@ -71,7 +71,7 @@ class SessionManager:
                 session_id = f"wecom_user_{user_id}"
 
             # 创建用户独立的目录结构
-            base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'user_data', user_id)
+            base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data', user_id)
             workspace_dir = os.path.join(base_dir, 'workspace')
             files_dir = os.path.join(base_dir, 'files')
 

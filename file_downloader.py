@@ -23,7 +23,8 @@ class FileDownloader:
         Args:
             download_dir: 基础文件下载目录（用户目录会在此基础上创建）
         """
-        self.base_download_dir = download_dir
+        # 使用 user_data/{user_id}/files/ 目录结构，保持与其他模块一致
+        self.base_download_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data')
         self._ensure_base_dir()
 
     def _ensure_base_dir(self):
@@ -42,11 +43,12 @@ class FileDownloader:
         Returns:
             用户的下载目录路径
         """
-        user_dir = os.path.join(self.base_download_dir, user_id)
-        if not os.path.exists(user_dir):
-            os.makedirs(user_dir)
-            logger.info(f"[文件下载器] 创建用户下载目录: {user_dir}")
-        return user_dir
+        # 使用 user_data/{user_id}/files/ 目录
+        user_files_dir = os.path.join(self.base_download_dir, user_id, 'files')
+        if not os.path.exists(user_files_dir):
+            os.makedirs(user_files_dir, exist_ok=True)
+            logger.info(f"[文件下载器] 创建用户文件目录: {user_files_dir}")
+        return user_files_dir
 
     def download_file(self, file_url: str, user_id: str = None, filename: Optional[str] = None, aes_key_base64: str = None) -> Optional[dict]:
         """
@@ -135,8 +137,12 @@ class FileDownloader:
             # 检查文件头是否需要解密（企业微信的图片/文件都是加密的）
             if len(file_content) > 0:
                 first_4_bytes = file_content[:4]
-                # 检查是否是企业微信加密格式（图片以 f6 4d 2a 28 开头，文件以 7b 1a 7a 03 开头）
-                if first_4_bytes == b'\xf6\x4d\x2a\x28' or first_4_bytes == b'\x7b\x1a\x7a\x03':
+                # 检查是否是企业微信加密格式
+                # 已知格式：
+                # - 图片旧格式: f6 4d 2a 28
+                # - 文件旧格式: 7b 1a 7a 03
+                # - 图片新格式: 17 ef 79 e9
+                if first_4_bytes == b'\xf6\x4d\x2a\x28' or first_4_bytes == b'\x7b\x1a\x7a\x03' or first_4_bytes == b'\x17\xef\x79\xe9':
                     logger.info(f"[文件下载器] 检测到加密文件，尝试解密: {first_4_bytes.hex()}")
 
                     if aes_key_base64:
