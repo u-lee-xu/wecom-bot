@@ -123,8 +123,24 @@ def extract_media_id(url: str) -> str:
     try:
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(url)
+        
+        # 首先尝试从查询参数中提取
         query_params = parse_qs(parsed.query)
-        return query_params.get('media_id', [None])[0]
+        media_id = query_params.get('media_id', [None])[0]
+        if media_id:
+            return media_id
+        
+        # 如果查询参数中没有，尝试从路径中提取
+        # 企业微信 URL 格式: https://ww-aibot-img-1258476243.cos.ap-guangzhou.myqcloud.com/yQQ1DwE/{media_id}?sign=...
+        path_parts = parsed.path.strip('/').split('/')
+        if path_parts:
+            # media_id 通常是路径的最后一部分
+            potential_media_id = path_parts[-1]
+            # 验证是否为纯数字（企业微信的 media_id 通常是数字）
+            if potential_media_id.isdigit():
+                return potential_media_id
+        
+        return None
     except Exception as e:
         logger.error(f"[提取 media_id] 失败: {e}")
         return None
@@ -537,7 +553,7 @@ def receive_message():
                             conn.close()
                             logger.error(f"[接收消息] 引用的图片消息不存在（media_id: {quoted_media_id}）")
                             stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在"
+                            error_message = "您引用的消息不存在，请重新发送"
                             stream = MakeTextStream(stream_id, error_message, True)
                             encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
                             if encrypted_resp:
@@ -545,8 +561,15 @@ def receive_message():
                             return "success"
                         conn.close()
                     else:
-                        # 无法提取 media_id，跳过验证
+                        # 无法提取 media_id，拒绝处理引用图片
                         logger.warning(f"[接收消息] 无法从引用图片 URL 提取 media_id: {quoted_image_url}")
+                        stream_id = str(int(time.time()))
+                        error_message = "您引用的消息不存在，请重新发送"
+                        stream = MakeTextStream(stream_id, error_message, True)
+                        encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
+                        if encrypted_resp:
+                            return encrypted_resp
+                        return "success"
                     
                     # 消息存在，下载图片
                     download_result = file_downloader.download_file(quoted_image_url, user_id=user_id, aes_key_base64=config.WECOM_ENCODING_AES_KEY)
@@ -599,7 +622,7 @@ def receive_message():
                             conn.close()
                             logger.error(f"[接收消息] 引用的文件消息不存在（media_id: {quoted_media_id}）")
                             stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在"
+                            error_message = "您引用的消息不存在，请重新发送"
                             stream = MakeTextStream(stream_id, error_message, True)
                             encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
                             if encrypted_resp:
@@ -607,8 +630,15 @@ def receive_message():
                             return "success"
                         conn.close()
                     else:
-                        # 无法提取 media_id，跳过验证
+                        # 无法提取 media_id，拒绝处理引用文件
                         logger.warning(f"[接收消息] 无法从引用文件 URL 提取 media_id: {quoted_file_url}")
+                        stream_id = str(int(time.time()))
+                        error_message = "您引用的消息不存在，请重新发送"
+                        stream = MakeTextStream(stream_id, error_message, True)
+                        encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
+                        if encrypted_resp:
+                            return encrypted_resp
+                        return "success"
                     
                     # 消息存在，下载文件
                     download_result = file_downloader.download_file(quoted_file_url, user_id=user_id, aes_key_base64=config.WECOM_ENCODING_AES_KEY)
