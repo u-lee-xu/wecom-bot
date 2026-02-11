@@ -63,23 +63,62 @@ class SessionManager:
         try:
             # 延迟导入，避免循环依赖
             from iflow_sdk import IFlowClient, IFlowOptions
+            from iflow_sdk.types import SessionSettings
+            import os
 
             # 使用提供的 session_id 或生成新的
             if session_id is None:
                 session_id = f"wecom_user_{user_id}"
 
+            # 创建用户独立的目录结构
+            base_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'user_data', user_id)
+            workspace_dir = os.path.join(base_dir, 'workspace')
+            files_dir = os.path.join(base_dir, 'files')
+
+            # 确保目录存在
+            os.makedirs(workspace_dir, exist_ok=True)
+            os.makedirs(files_dir, exist_ok=True)
+
+            logger.info(f"[会话管理器] 用户 {user_id} 目录: workspace={workspace_dir}, files={files_dir}")
+
+            # 系统提示词：禁止提及技术细节和环境信息
+            system_prompt = """你是一个专业的AI助手。请严格遵循以下规则：
+
+1. 在回复中只关注内容本身，不要提及任何技术细节
+2. 绝对不要提及：文件格式、文件大小、文件路径、加密、解密、下载、AES密钥、哈希等技术术语
+3. 不要解释如何获取、处理或传输文件
+4. 当被问及上传了什么文件时，只列出文件名和内容主题
+5. 保持回复简洁自然，像正常对话一样
+6. 即使看到文件名包含技术信息（如哈希值），也不要在回复中提及
+7. 绝对不要从工作目录、项目结构、文件路径等环境信息推断用户的情况或项目信息
+8. 不要提及用户的职业、工作内容或项目类型，除非用户明确告诉你
+
+【重要原则】：除非用户在对话中明确提供信息，否则不要做任何关于用户身份、工作或项目的假设或推断。
+
+【文件路径说明】当用户上传文件或引用文件时，消息中会包含 [FILE_PATH] 标记，该标记后面的绝对路径是实际文件路径，请使用这个路径来读取文件。不要在回复中提及这个路径或 [FILE_PATH] 标记。"""
+
+            # 创建会话设置
+            session_settings = SessionSettings(system_prompt=system_prompt)
+
             # 为每个用户创建独立的会话配置
+            # 使用空的 workspace 目录作为 cwd，防止 iFlow 扫描项目目录
+            # 通过 file_allowed_dirs 允许访问用户的 files 目录
             options = IFlowOptions(
                 session_id=session_id,
-                auto_start_process=True
+                cwd=workspace_dir,
+                file_access=True,
+                file_allowed_dirs=[files_dir],
+                file_read_only=True,
+                auto_start_process=True,
+                session_settings=session_settings
             )
 
             # 创建 IFlowClient 实例
             client = IFlowClient(options)
-            
+
             # 建立连接
             await client.connect()
-            
+
             self.sessions[user_id] = client
 
             logger.info(f"[会话管理器] 用户 {user_id} 会话创建成功，session_id: {session_id}")
@@ -165,6 +204,42 @@ class SessionManager:
     def has_session(self, user_id: str) -> bool:
         """检查用户是否有会话"""
         return user_id in self.sessions
+
+    async def reset_user_session(self, user_id: str):
+        """
+        重置用户会话（关闭旧会话、删除会话历史文件、创建新会话）
+
+        Args:
+            user_id: 用户 ID
+        """
+        try:
+            # 获取旧的 session_id
+            old_session_id = db_manager.get_user_session(user_id)
+            
+            # 关闭旧会话
+            if user_id in self.sessions:
+                await self.close_session(user_id)
+            
+            # 删除 iFlow 会话历史文件
+            if old_session_id:
+                import os
+                import shutil
+                iflow_history_dir = os.path.expanduser(f"~/.iflow/history/{old_session_id}")
+                if os.path.exists(iflow_history_dir):
+                    try:
+                        shutil.rmtree(iflow_history_dir)
+                        logger.info(f"[会话管理器] 已删除 iFlow 会话历史: {iflow_history_dir}")
+                    except Exception as e:
+                        logger.error(f"[会话管理器] 删除 iFlow 会话历史失败: {e}")
+            
+            # 清除用户的文件信息
+            self.clear_user_file(user_id)
+            
+            logger.info(f"[会话管理器] 用户 {user_id} 会话已重置")
+            
+        except Exception as e:
+            logger.error(f"[会话管理器] 重置用户 {user_id} 会话失败: {e}")
+            raise
 
 
 # 全局会话管理器实例

@@ -21,30 +21,54 @@ class FileDownloader:
         初始化文件下载器
 
         Args:
-            download_dir: 文件下载目录
+            download_dir: 基础文件下载目录（用户目录会在此基础上创建）
         """
-        self.download_dir = download_dir
-        self._ensure_download_dir()
+        self.base_download_dir = download_dir
+        self._ensure_base_dir()
 
-    def _ensure_download_dir(self):
-        """确保下载目录存在"""
-        if not os.path.exists(self.download_dir):
-            os.makedirs(self.download_dir)
-            logger.info(f"[文件下载器] 创建下载目录: {self.download_dir}")
+    def _ensure_base_dir(self):
+        """确保基础下载目录存在"""
+        if not os.path.exists(self.base_download_dir):
+            os.makedirs(self.base_download_dir)
+            logger.info(f"[文件下载器] 创建基础下载目录: {self.base_download_dir}")
 
-    def download_file(self, file_url: str, filename: Optional[str] = None) -> Optional[dict]:
+    def _get_user_download_dir(self, user_id: str) -> str:
+        """
+        获取用户的下载目录
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            用户的下载目录路径
+        """
+        user_dir = os.path.join(self.base_download_dir, user_id)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+            logger.info(f"[文件下载器] 创建用户下载目录: {user_dir}")
+        return user_dir
+
+    def download_file(self, file_url: str, user_id: str = None, filename: Optional[str] = None, aes_key_base64: str = None) -> Optional[dict]:
         """
         下载文件
 
         Args:
             file_url: 文件 URL
+            user_id: 用户 ID，用于指定保存到用户的目录
             filename: 可选的文件名，如果不提供则自动生成
+            aes_key_base64: 可选的 AES 密钥，如果提供则自动解密文件
 
         Returns:
             包含 hash_path 和 original_filename 的字典，失败返回 None
         """
         try:
-            logger.info(f"[文件下载器] 开始下载文件: {file_url}")
+            # 确定下载目录
+            if user_id:
+                download_dir = self._get_user_download_dir(user_id)
+            else:
+                download_dir = self.base_download_dir
+
+            logger.info(f"[文件下载器] 开始下载文件: {file_url}, 用户: {user_id}, 目录: {download_dir}")
 
             # 下载文件
             response = requests.get(file_url, timeout=30)
@@ -64,14 +88,35 @@ class FileDownloader:
             # 生成基于哈希的文件名
             file_ext = os.path.splitext(filename)[1]
             hash_filename = f"{file_hash}{file_ext}"
-            file_path = os.path.join(self.download_dir, hash_filename)
+            file_path = os.path.join(download_dir, hash_filename)
 
             # 检查文件是否已存在
             if os.path.exists(file_path):
                 file_size = len(file_content)
                 logger.info(f"[文件下载器] 文件已存在，复用现有文件: {file_path} ({file_size} bytes)")
+
+                # 如果存在解密版本，返回解密路径（绝对路径）
+                decrypted_path = os.path.splitext(file_path)[0] + "_decrypted" + file_ext
+                if os.path.exists(decrypted_path):
+                    return {
+                        'hash_path': os.path.abspath(decrypted_path),
+                        'original_filename': filename,
+                        'hash_filename': os.path.basename(decrypted_path)
+                    }
+                
+                # 如果只存在加密文件，尝试解密
+                if aes_key_base64:
+                    logger.info(f"[文件下载器] 检测到已存在的加密文件，尝试解密")
+                    decrypted_path = self.decrypt_file(file_path, aes_key_base64)
+                    if decrypted_path:
+                        return {
+                            'hash_path': os.path.abspath(decrypted_path),
+                            'original_filename': filename,
+                            'hash_filename': os.path.basename(decrypted_path)
+                        }
+
                 return {
-                    'hash_path': file_path,
+                    'hash_path': os.path.abspath(file_path),
                     'original_filename': filename,
                     'hash_filename': hash_filename
                 }
@@ -83,10 +128,28 @@ class FileDownloader:
             file_size = len(file_content)
             logger.info(f"[文件下载器] 文件下载成功: {file_path} ({file_size} bytes)")
 
+            # 检查文件是否需要解密
+            final_path = file_path
+            final_hash_filename = hash_filename
+
+            # 检查文件头是否需要解密（企业微信的图片/文件都是加密的）
+            if len(file_content) > 0:
+                first_4_bytes = file_content[:4]
+                # 检查是否是企业微信加密格式（图片以 f6 4d 2a 28 开头，文件以 7b 1a 7a 03 开头）
+                if first_4_bytes == b'\xf6\x4d\x2a\x28' or first_4_bytes == b'\x7b\x1a\x7a\x03':
+                    logger.info(f"[文件下载器] 检测到加密文件，尝试解密: {first_4_bytes.hex()}")
+
+                    if aes_key_base64:
+                        decrypted_path = self.decrypt_file(file_path, aes_key_base64)
+                        if decrypted_path:
+                            final_path = decrypted_path
+                            final_hash_filename = os.path.basename(decrypted_path)
+                            logger.info(f"[文件下载器] 文件解密成功: {final_path}")
+
             return {
-                'hash_path': file_path,
+                'hash_path': os.path.abspath(final_path),
                 'original_filename': filename,
-                'hash_filename': hash_filename
+                'hash_filename': final_hash_filename
             }
 
         except Exception as e:
@@ -193,8 +256,8 @@ class FileDownloader:
             current_time = time.time()
             max_age_seconds = max_age_hours * 3600
 
-            for filename in os.listdir(self.download_dir):
-                file_path = os.path.join(self.download_dir, filename)
+            for filename in os.listdir(self.base_download_dir):
+                file_path = os.path.join(self.base_download_dir, filename)
                 if os.path.isfile(file_path):
                     file_age = current_time - os.path.getmtime(file_path)
                     if file_age > max_age_seconds:

@@ -48,12 +48,27 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS messages (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id TEXT NOT NULL,
+                        msgid TEXT,
                         message_type TEXT NOT NULL,
                         content TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (user_id) REFERENCES user_sessions(user_id)
                     )
                 """)
+
+                # 检查是否需要添加 msgid 字段（兼容旧数据库）
+                cursor.execute("PRAGMA table_info(messages)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'msgid' not in columns:
+                    cursor.execute("ALTER TABLE messages ADD COLUMN msgid TEXT")
+                    conn.commit()
+                    logger.info("[数据库] 已添加 msgid 字段到 messages 表")
+
+                # 检查是否需要添加 media_id 字段（兼容旧数据库）
+                if 'media_id' not in columns:
+                    cursor.execute("ALTER TABLE messages ADD COLUMN media_id TEXT")
+                    conn.commit()
+                    logger.info("[数据库] 已添加 media_id 字段到 messages 表")
 
                 # 创建文件映射表
                 cursor.execute("""
@@ -136,7 +151,7 @@ class DatabaseManager:
             logger.error(f"[数据库] 获取用户会话失败: {e}")
             return None
 
-    def log_message(self, user_id: str, message_type: str, content: str = None, file_path: str = None):
+    def log_message(self, user_id: str, message_type: str, content: str = None, file_path: str = None, msgid: str = None, media_id: str = None):
         """
         记录消息
 
@@ -145,24 +160,36 @@ class DatabaseManager:
             message_type: 消息类型（user_message/bot_message/image_message/file_message）
             content: 消息内容
             file_path: 文件路径（可选）
+            msgid: 消息唯一标识（可选）
+            media_id: 企业微信媒体文件 ID（可选）
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
-                # 如果有文件路径，将文件路径信息添加到内容中
+
+                # 如果有文件路径，记录哈希文件名（用于后续查询完整路径）
                 if file_path and message_type in ['image_message', 'file_message']:
                     import os
-                    file_info = f"[文件路径: {file_path} | 文件名: {os.path.basename(file_path)}]"
+                    # 从文件路径中提取哈希文件名
+                    hash_filename = os.path.basename(file_path)
+                    # 如果是解密后的文件，去掉 _decrypted 后缀查询原始文件名
+                    if '_decrypted' in hash_filename:
+                        original_name = self.get_original_filename(hash_filename)
+                        display_name = original_name if original_name else hash_filename
+                    else:
+                        display_name = hash_filename
+
+                    # 记录格式：[文件: 显示名] [HASH: 哈希文件名]
+                    file_info = f"[文件: {display_name}] [HASH: {hash_filename}]"
                     if content:
                         content = f"{content} | {file_info}"
                     else:
                         content = file_info
-                
+
                 cursor.execute("""
-                    INSERT INTO messages (user_id, message_type, content)
-                    VALUES (?, ?, ?)
-                """, (user_id, message_type, content))
+                    INSERT INTO messages (user_id, msgid, message_type, content, media_id)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, msgid, message_type, content, media_id))
 
                 # 更新消息计数
                 cursor.execute("""
@@ -205,29 +232,47 @@ class DatabaseManager:
                 
                 content = result[0]
                 
-                # 解析文件路径信息
-                if '[文件路径:' in content:
-                    import re
-                    match = re.search(r'\[文件路径:\s*([^\|]+)\s*\|\s*文件名:\s*([^\]]+)\]', content)
-                    if match:
-                        file_path = match.group(1).strip()
-                        filename = match.group(2).strip()
-                        
-                        # 判断文件类型
-                        file_ext = os.path.splitext(filename)[1].lower()
-                        if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
-                            file_type = 'image'
-                        else:
-                            file_type = 'file'
-                        
-                        return {
-                            'file_type': file_type,
-                            'file_path': file_path,
-                            'filename': filename,
-                            'created_at': result[1]
-                        }
+                # 解析哈希文件名
+                import re
+                hash_match = re.search(r'\[HASH:\s*([^\]]+)\]', content)
+                if not hash_match:
+                    return None
                 
-                return None
+                hash_filename = hash_match.group(1).strip()
+                
+                # 根据哈希文件名判断完整路径（使用用户独立目录）
+                import os
+                user_files_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data', user_id, 'files')
+                
+                # 如果是 _decrypted 文件，使用解密后的路径；否则使用加密路径
+                if '_decrypted' in hash_filename:
+                    file_path = os.path.join(user_files_dir, hash_filename)
+                else:
+                    # 检查是否存在解密版本
+                    decrypted_path = os.path.join(user_files_dir, hash_filename.replace(os.path.splitext(hash_filename)[0], os.path.splitext(hash_filename)[0] + '_decrypted' + os.path.splitext(hash_filename)[1]))
+                    if os.path.exists(decrypted_path):
+                        file_path = decrypted_path
+                    else:
+                        file_path = os.path.join(user_files_dir, hash_filename)
+                
+                # 判断文件类型
+                file_ext = os.path.splitext(hash_filename)[1].lower()
+                if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+                    file_type = 'image'
+                else:
+                    file_type = 'file'
+                
+                # 获取原始文件名
+                original_filename = self.get_original_filename(hash_filename)
+                display_filename = original_filename if original_filename else hash_filename
+                
+                return {
+                    'file_type': file_type,
+                    'file_path': file_path,
+                    'filename': display_filename,
+                    'hash_filename': hash_filename,
+                    'created_at': result[1]
+                }
                 
         except Exception as e:
             logger.error(f"[数据库] 获取最近文件消息失败: {e}")
@@ -375,43 +420,57 @@ class DatabaseManager:
 
     def get_all_file_mappings(self, user_id: str = None) -> list:
         """
-        获取所有文件映射
+        获取所有文件映射（简化格式，用于用户查询）
 
         Args:
             user_id: 可选的用户 ID，如果提供则只返回该用户的文件
 
         Returns:
-            文件映射列表，每个元素包含 hash_filename, original_filename, user_id, first_seen, last_seen
+            文件列表，每个元素只包含 original_filename 和 file_type
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 if user_id:
                     cursor.execute("""
-                        SELECT hash_filename, original_filename, user_id, first_seen, last_seen
+                        SELECT hash_filename, original_filename, last_seen
                         FROM file_mappings
                         WHERE user_id = ?
                         ORDER BY last_seen DESC
                     """, (user_id,))
                 else:
                     cursor.execute("""
-                        SELECT hash_filename, original_filename, user_id, first_seen, last_seen
+                        SELECT hash_filename, original_filename, last_seen
                         FROM file_mappings
                         ORDER BY last_seen DESC
                     """)
-                
-                mappings = []
+
+                files = []
                 for row in cursor.fetchall():
-                    mappings.append({
-                        'hash_filename': row[0],
-                        'original_filename': row[1],
-                        'user_id': row[2],
-                        'first_seen': row[3],
-                        'last_seen': row[4]
+                    hash_filename = row[0]
+                    original_filename = row[1]
+
+                    # 根据文件扩展名判断文件类型
+                    import os
+                    file_ext = os.path.splitext(hash_filename)[1].lower()
+                    if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']:
+                        file_type = '图片'
+                    elif file_ext in ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']:
+                        file_type = '文档'
+                    elif file_ext in ['.mp3', '.wav', '.ogg', '.m4a']:
+                        file_type = '音频'
+                    elif file_ext in ['.mp4', '.avi', '.mov', '.mkv']:
+                        file_type = '视频'
+                    else:
+                        file_type = '文件'
+
+                    files.append({
+                        'filename': original_filename,
+                        'type': file_type
                     })
-                
-                return mappings
+
+                return files
 
         except Exception as e:
             logger.error(f"[数据库] 获取文件映射失败: {e}")

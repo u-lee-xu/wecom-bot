@@ -107,13 +107,16 @@ class FileProcessor:
 
         # 对于图片，返回描述信息
         content = f"""
-我收到了一张图片文件：
+请分析这张图片的内容。
 
-- 文件名: {file_info['name']}
-- 文件大小: {file_info['size_mb']} MB
-- 文件格式: {file_info['extension']}
+文件名: {file_info['name']}
 
-请帮我分析这张图片的内容。如果能读取图片内容，请描述图片中的信息。
+[FILE_PATH] {file_path}
+
+【重要提示】在回复中：
+1. 只描述图片内容本身
+2. 绝对不要提及任何技术细节，包括：文件格式、文件大小、文件路径、加密、解密、下载等
+3. 不要解释如何获取或处理文件的
 """
 
         return {
@@ -169,13 +172,13 @@ class FileProcessor:
         if file_info['size'] > 10 * 1024 * 1024:  # 10MB
             logger.warning(f"[文件处理器] 文件过大: {file_info['size_mb']} MB")
             content = f"""
-我收到了一个文档文件：
+文档文件较大，请分批读取并分析：{file_info['name']}
 
-- 文件名: {file_info['name']}
-- 文件大小: {file_info['size_mb']} MB
-- 文件格式: {file_info['extension']}
+[FILE_PATH] {file_path}
 
-文件较大（超过 10MB），可能需要分批处理。请告诉我你希望如何处理这个文件。
+【重要提示】在回复中：
+1. 只关注文档内容和分析结果
+2. 绝对不要提及任何技术细节，包括：文件格式、文件大小、文件路径、加密、解密、下载等
 """
             return {
                 "success": True,
@@ -232,16 +235,15 @@ class FileProcessor:
 
                     # 添加文件信息前缀
                     prefix = f"""
-我收到了一个文本文件：
+请分析以下文本内容（来自文件：{file_info['name']}）：
 
-- 文件名: {file_info['name']}
-- 文件大小: {file_info['size_mb']} MB
-- 文件格式: {file_info['extension']}
-
-文件内容如下：
+[FILE_PATH] {file_path}
 
 ---
 
+【重要提示】在回复中：
+1. 只分析文本内容本身
+2. 绝对不要提及任何技术细节，包括：文件格式、文件大小、文件路径、加密、解密、下载等
 """
                     return prefix + content
 
@@ -271,14 +273,14 @@ class FileProcessor:
 
         # 对于文档文件，返回描述信息，让 iFlow CLI 的工具来处理
         content = f"""
-我收到了一个文档文件：
+请读取并分析这个文档文件：{file_info['name']}
 
-- 文件名: {file_info['name']}
-- 文件大小: {file_info['size_mb']} MB
-- 文件格式: {file_info['extension']}
-- 文件路径: {file_path}
+[FILE_PATH] {file_path}
 
-请使用适当的工具读取这个文档文件的内容，并进行分析。
+【重要提示】在回复中：
+1. 只关注文档的内容和分析结果
+2. 绝对不要提及任何技术细节，包括：文件格式、文件大小、文件路径、加密、解密、下载等
+3. 不要解释如何获取或处理文件的
 """
 
         return content
@@ -297,14 +299,13 @@ class FileProcessor:
         logger.info(f"[文件处理器] 处理通用文件: {file_info['name']}")
 
         content = f"""
-我收到了一个文件：
+请处理这个文件：{file_info['name']}
 
-- 文件名: {file_info['name']}
-- 文件大小: {file_info['size_mb']} MB
-- 文件格式: {file_info['extension']}
-- 文件路径: {file_path}
+[FILE_PATH] {file_path}
 
-这是一个 {file_info['extension']} 类型的文件。请告诉我你希望如何处理这个文件。
+【重要提示】在回复中：
+1. 只关注文件内容或处理结果
+2. 绝对不要提及任何技术细节，包括：文件格式、文件大小、文件路径、加密、解密、下载等
 """
 
         return content
