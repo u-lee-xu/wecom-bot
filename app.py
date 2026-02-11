@@ -26,9 +26,31 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# 项目根目录（用于相对路径转换）
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 # 全局事件循环（用于所有异步操作）
 _global_loop = None
 _loop_lock = threading.Lock()
+
+def to_relative_path(absolute_path: str) -> str:
+    """
+    将绝对路径转换为相对于项目根目录的相对路径
+    
+    Args:
+        absolute_path: 绝对路径
+        
+    Returns:
+        相对路径（如 user_data/XuLi/files/xxx.jpg）
+    """
+    try:
+        # 转换为相对路径
+        rel_path = os.path.relpath(absolute_path, PROJECT_ROOT)
+        # 确保使用正斜杠（跨平台兼容）
+        return rel_path.replace(os.sep, '/')
+    except Exception as e:
+        logger.error(f"[路径转换] 转换路径失败: {absolute_path}, 错误: {e}")
+        return absolute_path
 
 # 请求去重缓存（防止企业微信重试导致重复处理）
 _request_cache = {}
@@ -717,10 +739,13 @@ def receive_message():
                     else:
                         display_filename = hash_filename
 
+                    # 转换为相对路径（便于迁移）
+                    relative_path = to_relative_path(quoted_image_path)
+                    
                     # 添加隐藏的文件路径标记，让 AI 能找到文件
-                    file_info = f"\n\n[引用图片] {display_filename}\n[FILE_PATH] {quoted_image_path}"
+                    file_info = f"\n\n[引用图片] {display_filename}\n[FILE_PATH] {relative_path}"
                     text_content_with_file = text_content + file_info
-                    logger.info(f"[接收消息] 附加引用图片信息到消息: {quoted_image_path}")
+                    logger.info(f"[接收消息] 附加引用图片信息到消息: {relative_path}")
                 elif quoted_file_path:
                     # 使用引用的文件
                     hash_filename = os.path.basename(quoted_file_path)
@@ -731,10 +756,13 @@ def receive_message():
                     else:
                         display_filename = hash_filename
 
+                    # 转换为相对路径（便于迁移）
+                    relative_path = to_relative_path(quoted_file_path)
+                    
                     # 添加隐藏的文件路径标记，让 AI 能找到文件
-                    file_info = f"\n\n[引用文件] {display_filename}\n[FILE_PATH] {quoted_file_path}"
+                    file_info = f"\n\n[引用文件] {display_filename}\n[FILE_PATH] {relative_path}"
                     text_content_with_file = text_content + file_info
-                    logger.info(f"[接收消息] 附加引用文件信息到消息: {quoted_file_path}")
+                    logger.info(f"[接收消息] 附加引用文件信息到消息: {relative_path}")
                 else:
                     # 查询数据库中最新的文件（用户上传后的后续指令）
                     recent_file = db_manager.get_recent_file_message(user_id)
@@ -750,10 +778,13 @@ def receive_message():
                         else:
                             display_filename = hash_filename
 
+                        # 转换为相对路径（便于迁移）
+                        relative_path = to_relative_path(file_path)
+                        
                         # 添加隐藏的文件路径标记，让 AI 能找到文件
-                        file_info = f"\n\n[文件] {display_filename}\n[FILE_PATH] {file_path}"
+                        file_info = f"\n\n[文件] {display_filename}\n[FILE_PATH] {relative_path}"
                         text_content_with_file = text_content + file_info
-                        logger.info(f"[接收消息] 附加文件信息到消息: {file_path}")
+                        logger.info(f"[接收消息] 附加文件信息到消息: {relative_path}")
                     else:
                         text_content_with_file = text_content
 

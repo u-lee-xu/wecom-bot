@@ -70,8 +70,11 @@ class SessionManager:
             if session_id is None:
                 session_id = f"wecom_user_{user_id}"
 
+            # 项目根目录（用于迁移兼容性）
+            project_root = os.path.dirname(os.path.abspath(__file__))
+
             # 创建用户独立的目录结构
-            base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data', user_id)
+            base_dir = os.path.join(project_root, 'user_data', user_id)
             workspace_dir = os.path.join(base_dir, 'workspace')
             files_dir = os.path.join(base_dir, 'files')
 
@@ -88,26 +91,27 @@ class SessionManager:
 2. 绝对不要提及：文件格式、文件大小、文件路径、加密、解密、下载、AES密钥、哈希等技术术语
 3. 不要解释如何获取、处理或传输文件
 4. 当被问及上传了什么文件时，只列出文件名和内容主题
-5. 保持回复简洁自然，像正常对话一样
+5. 保持回复自然，像正常对话一样
 6. 即使看到文件名包含技术信息（如哈希值），也不要在回复中提及
 7. 绝对不要从工作目录、项目结构、文件路径等环境信息推断用户的情况或项目信息
 8. 不要提及用户的职业、工作内容或项目类型，除非用户明确告诉你
 
 【重要原则】：除非用户在对话中明确提供信息，否则不要做任何关于用户身份、工作或项目的假设或推断。
 
-【文件路径说明】当用户上传文件或引用文件时，消息中会包含 [FILE_PATH] 标记，该标记后面的绝对路径是实际文件路径，请使用这个路径来读取文件。不要在回复中提及这个路径或 [FILE_PATH] 标记。"""
+【文件路径说明】当用户上传文件或引用文件时，消息中会包含 [FILE_PATH] 标记，该标记后面的路径是相对于项目根目录的相对路径（如 user_data/xxx/files/xxx.jpg），iFlow SDK 会自动解析为绝对路径。不要在回复中提及这个路径或 [FILE_PATH] 标记。"""
 
             # 创建会话设置
             session_settings = SessionSettings(system_prompt=system_prompt)
 
             # 为每个用户创建独立的会话配置
-            # 使用空的 workspace 目录作为 cwd，防止 iFlow 扫描项目目录
-            # 通过 file_allowed_dirs 允许访问用户的 files 目录
+            # 使用项目根目录作为 cwd，便于迁移
+            # 通过 file_allowed_dirs 允许访问用户的 files 目录（使用相对路径）
+            # 相对路径会自动解析为绝对路径
             options = IFlowOptions(
                 session_id=session_id,
-                cwd=workspace_dir,
+                cwd=project_root,
                 file_access=True,
-                file_allowed_dirs=[files_dir],
+                file_allowed_dirs=[f'user_data/{user_id}/files'],
                 file_read_only=True,
                 auto_start_process=True,
                 session_settings=session_settings
