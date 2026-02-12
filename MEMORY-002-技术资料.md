@@ -149,7 +149,22 @@ print(response)
 | `iflow --resume` | 显示历史会话列表并选择恢复 |
 | `iflow -r <session_id>` | 直接恢复指定会话 |
 
-### 2.6 官方资源
+### 2.6 会话恢复限制
+
+#### load_session 方法限制
+- **存在性：** Python SDK 提供了 `load_session()` 方法
+- **服务器支持：** ❌ iFlow 服务器暂不支持此功能（loadSession capability 为 false）
+- **代码注释（SDK源码）：**
+  ```python
+  Note:
+      This method is part of the ACP protocol but is not yet supported
+      by iFlow (loadSession capability is false). It's included for
+      future compatibility.
+  ```
+- **影响：** 服务重启后无法通过 `load_session` 恢复之前的会话记忆
+- **解决方案（待实现）：** 从数据库读取用户最近消息，注入到新会话的系统提示词中
+
+### 2.7 官方资源
 - Python SDK：https://pypi.org/project/iflow-cli-sdk/
 - ACP 协议：https://agentcommunicationprotocol.dev/
 - iFlow 官网：https://cli.iflow.cn/

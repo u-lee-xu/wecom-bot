@@ -31,6 +31,13 @@ _PROCESSING_MESSAGES = [
     "收到，稍等一下",
 ]
 
+# 长时间处理提示列表（超过2分钟）
+_LONG_WAIT_MESSAGES = [
+    "任务比较复杂，请耐心等待",
+    "正在深入分析，请稍候",
+    "处理需要一些时间，请耐心等待",
+]
+
 def get_busy_message():
     """随机获取一个忙碌提示（第二条及后续消息）"""
     return random.choice(_BUSY_MESSAGES)
@@ -38,6 +45,10 @@ def get_busy_message():
 def get_processing_message():
     """随机获取一个处理中提示（第一条消息）"""
     return random.choice(_PROCESSING_MESSAGES)
+
+def get_long_wait_message():
+    """随机获取一个长等待提示（长时间运行的任务）"""
+    return random.choice(_LONG_WAIT_MESSAGES)
 
 # 配置日志
 logging.basicConfig(
@@ -114,7 +125,7 @@ def run_async(coro):
     """在全局事件循环中运行异步函数"""
     loop = get_global_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result(timeout=120)
+    return future.result(timeout=300)  # 5分钟超时
 
 
 def MakeTextStream(stream_id, content, finish):
@@ -969,13 +980,25 @@ def receive_message():
                             return "success"
                         else:
                             # 还在处理中，返回当前累积的内容（流式）
-                            accumulated_text = task.get('result', '')
-                            logger.info(f"[接收消息] 还在处理中，返回累积内容（长度: {len(accumulated_text)}）")
+                            accumulated_text = task.get('result') or ''
                             
-                            # 如果有累积内容，返回累积内容；否则返回处理中提示
-                            if accumulated_text:
+                            # 检查任务运行时间
+                            current_time = int(time.time())
+                            elapsed_time = current_time - task.get('created_at', current_time)
+                            
+                            # 根据运行时间选择提示消息
+                            if elapsed_time > 120 and not accumulated_text:
+                                # 超过2分钟且没有累积内容，使用长等待消息
+                                message = get_long_wait_message()
+                                logger.info(f"[接收消息] 还在处理中，返回长等待提示（已运行{elapsed_time}秒）")
+                                stream = MakeTextStream(stream_id, message, False)
+                            elif accumulated_text:
+                                # 有累积内容，返回累积内容
+                                logger.info(f"[接收消息] 还在处理中，返回累积内容（长度: {len(accumulated_text)}，已运行{elapsed_time}秒）")
                                 stream = MakeTextStream(stream_id, accumulated_text, False)
                             else:
+                                # 没有累积内容，返回处理中提示
+                                logger.info(f"[接收消息] 还在处理中，返回处理中提示（已运行{elapsed_time}秒）")
                                 stream = MakeTextStream(stream_id, get_processing_message(), False)
                             
                             encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
