@@ -10,12 +10,34 @@ import asyncio
 import threading
 import time
 import os
+import random
 from session_manager import session_manager
 from database import db_manager
 from rate_limiter import rate_limiter
 from file_downloader import file_downloader
 from file_processor import file_processor
 import logging
+
+# 忙碌提示列表（随机选择）- 用于第二条及后续消息
+_BUSY_MESSAGES = [
+    "不好意思，我在忙，请稍后再试",
+    "我还在处理上一条消息，请稍后再试",
+]
+
+# 处理中提示列表（随机选择）- 用于第一条消息
+_PROCESSING_MESSAGES = [
+    "收到，让我想想",
+    "收到，正在处理中",
+    "收到，稍等一下",
+]
+
+def get_busy_message():
+    """随机获取一个忙碌提示（第二条及后续消息）"""
+    return random.choice(_BUSY_MESSAGES)
+
+def get_processing_message():
+    """随机获取一个处理中提示（第一条消息）"""
+    return random.choice(_PROCESSING_MESSAGES)
 
 # 配置日志
 logging.basicConfig(
@@ -236,35 +258,43 @@ def _execute_cleanup(user_id: str, cleanup_type: str) -> str:
             """, (user_id,))
             files_to_delete = [row[0] for row in cursor.fetchall()]
             
-            # 清理磁盘文件（使用用户独立的文件目录）
+            # 软删除：移动文件到deleted目录
             import os
+            import shutil
             user_files_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data', user_id, 'files')
+            deleted_dir = os.path.join(user_files_dir, 'deleted')
+            os.makedirs(deleted_dir, exist_ok=True)
+            
             deleted_count = 0
             for hash_filename in files_to_delete:
-                # 删除加密文件
+                # 标记文件为已删除（数据库）
+                file_hash = os.path.splitext(hash_filename)[0].split('_')[0]
+                if db_manager.mark_file_as_deleted(user_id, file_hash):
+                    deleted_count += 1
+                    logger.info(f"[清理操作] 已标记文件为已删除: {hash_filename}")
+                
+                # 移动加密文件到deleted目录
                 encrypted_path = os.path.join(user_files_dir, hash_filename)
                 if os.path.exists(encrypted_path):
                     try:
-                        os.remove(encrypted_path)
-                        deleted_count += 1
-                        logger.info(f"[清理操作] 已删除文件: {encrypted_path}")
+                        shutil.move(encrypted_path, os.path.join(deleted_dir, hash_filename))
+                        logger.info(f"[清理操作] 已移动文件: {hash_filename}")
                     except Exception as e:
-                        logger.error(f"[清理操作] 删除文件失败: {encrypted_path}, 错误: {e}")
+                        logger.error(f"[清理操作] 移动文件失败: {encrypted_path}, 错误: {e}")
                 
-                # 删除解密文件（如果存在）
+                # 移动解密文件（如果存在）
                 name, ext = os.path.splitext(hash_filename)
                 decrypted_path = os.path.join(user_files_dir, f"{name}_decrypted{ext}")
                 if os.path.exists(decrypted_path):
                     try:
-                        os.remove(decrypted_path)
-                        deleted_count += 1
-                        logger.info(f"[清理操作] 已删除文件: {decrypted_path}")
+                        shutil.move(decrypted_path, os.path.join(deleted_dir, f"{name}_decrypted{ext}"))
+                        logger.info(f"[清理操作] 已移动文件: {name}_decrypted{ext}")
                     except Exception as e:
-                        logger.error(f"[清理操作] 删除文件失败: {decrypted_path}, 错误: {e}")
+                        logger.error(f"[清理操作] 移动文件失败: {decrypted_path}, 错误: {e}")
             
-            logger.info(f"[清理操作] 共删除 {deleted_count} 个磁盘文件")
+            logger.info(f"[清理操作] 共标记 {deleted_count} 个文件为已删除")
             
-            # 清理数据库记录
+            # 清理file_mappings表记录
             cursor.execute("""
                 DELETE FROM file_mappings 
                 WHERE user_id = ? AND hash_filename NOT LIKE '%.jpg' 
@@ -288,35 +318,43 @@ def _execute_cleanup(user_id: str, cleanup_type: str) -> str:
             """, (user_id,))
             files_to_delete = [row[0] for row in cursor.fetchall()]
             
-            # 清理磁盘文件（使用用户独立的文件目录）
+            # 软删除：移动文件到deleted目录
             import os
+            import shutil
             user_files_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data', user_id, 'files')
+            deleted_dir = os.path.join(user_files_dir, 'deleted')
+            os.makedirs(deleted_dir, exist_ok=True)
+            
             deleted_count = 0
             for hash_filename in files_to_delete:
-                # 删除加密文件
+                # 标记文件为已删除（数据库）
+                file_hash = os.path.splitext(hash_filename)[0].split('_')[0]
+                if db_manager.mark_file_as_deleted(user_id, file_hash):
+                    deleted_count += 1
+                    logger.info(f"[清理操作] 已标记文件为已删除: {hash_filename}")
+                
+                # 移动加密文件到deleted目录
                 encrypted_path = os.path.join(user_files_dir, hash_filename)
                 if os.path.exists(encrypted_path):
                     try:
-                        os.remove(encrypted_path)
-                        deleted_count += 1
-                        logger.info(f"[清理操作] 已删除文件: {encrypted_path}")
+                        shutil.move(encrypted_path, os.path.join(deleted_dir, hash_filename))
+                        logger.info(f"[清理操作] 已移动文件: {hash_filename}")
                     except Exception as e:
-                        logger.error(f"[清理操作] 删除文件失败: {encrypted_path}, 错误: {e}")
+                        logger.error(f"[清理操作] 移动文件失败: {encrypted_path}, 错误: {e}")
                 
-                # 删除解密文件（如果存在）
+                # 移动解密文件（如果存在）
                 name, ext = os.path.splitext(hash_filename)
                 decrypted_path = os.path.join(user_files_dir, f"{name}_decrypted{ext}")
                 if os.path.exists(decrypted_path):
                     try:
-                        os.remove(decrypted_path)
-                        deleted_count += 1
-                        logger.info(f"[清理操作] 已删除文件: {decrypted_path}")
+                        shutil.move(decrypted_path, os.path.join(deleted_dir, f"{name}_decrypted{ext}"))
+                        logger.info(f"[清理操作] 已移动文件: {name}_decrypted{ext}")
                     except Exception as e:
-                        logger.error(f"[清理操作] 删除文件失败: {decrypted_path}, 错误: {e}")
+                        logger.error(f"[清理操作] 移动文件失败: {decrypted_path}, 错误: {e}")
             
-            logger.info(f"[清理操作] 共删除 {deleted_count} 个磁盘文件")
+            logger.info(f"[清理操作] 共标记 {deleted_count} 个文件为已删除")
             
-            # 清理数据库记录
+            # 清理file_mappings表记录
             cursor.execute("""
                 DELETE FROM file_mappings 
                 WHERE user_id = ? AND (hash_filename LIKE '%.jpg' 
@@ -370,6 +408,7 @@ def _execute_cleanup(user_id: str, cleanup_type: str) -> str:
             cursor.execute('DELETE FROM user_sessions WHERE user_id = ?', (user_id,))
             cursor.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
             cursor.execute('DELETE FROM file_mappings WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM file_hashes WHERE user_id = ?', (user_id,))
             conn.commit()
             conn.close()
             
@@ -533,59 +572,29 @@ def receive_message():
                     # 对于文件/图片引用，我们通过 URL + user_id 验证
                     # 对于文本引用，我们允许直接引用（因为不涉及文件访问）
 
-                # 如果有引用的图片，先检查消息是否存在
+                # 如果有引用的图片，直接下载并验证（引用同一张图片时media_id会变化）
                 quoted_image_path = None
                 if quoted_image_url:
-                    # 提取 media_id 并验证消息是否存在
-                    quoted_media_id = extract_media_id(quoted_image_url)
-                    
-                    if quoted_media_id:
-                        import sqlite3
-                        conn = sqlite3.connect(db_manager.db_path)
-                        cursor = conn.cursor()
-                        # 通过 media_id + user_id 精确验证
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM messages 
-                            WHERE user_id = ? AND media_id = ? AND message_type = 'image_message'
-                        """, (user_id, quoted_media_id))
-                        
-                        if cursor.fetchone()[0] == 0:
-                            conn.close()
-                            logger.error(f"[接收消息] 引用的图片消息不存在（media_id: {quoted_media_id}）")
-                            stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在，请重新发送"
-                            stream = MakeTextStream(stream_id, error_message, True)
-                            encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
-                            if encrypted_resp:
-                                return encrypted_resp
-                            return "success"
-                        conn.close()
-                    else:
-                        # 无法提取 media_id，拒绝处理引用图片
-                        logger.warning(f"[接收消息] 无法从引用图片 URL 提取 media_id: {quoted_image_url}")
-                        stream_id = str(int(time.time()))
-                        error_message = "您引用的消息不存在，请重新发送"
-                        stream = MakeTextStream(stream_id, error_message, True)
-                        encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
-                        if encrypted_resp:
-                            return encrypted_resp
-                        return "success"
-                    
-                    # 消息存在，下载图片
+                    # 直接下载引用的图片
                     download_result = file_downloader.download_file(quoted_image_url, user_id=user_id, aes_key_base64=config.WECOM_ENCODING_AES_KEY)
+                    
                     if download_result:
-                        final_path = download_result['hash_path']
-                        # 检查文件是否存在
-                        if not os.path.exists(final_path):
-                            logger.error(f"[接收消息] 引用图片文件不存在: {final_path}")
-                            stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在"
-                            stream = MakeTextStream(stream_id, error_message, True)
-                            encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
-                            if encrypted_resp:
-                                return encrypted_resp
-                            return "success"
+                        file_hash = download_result.get('file_hash')
+                        if file_hash:
+                            # 检查文件是否存在于用户的file_hashes表中且未被删除
+                            hash_status = db_manager.get_file_hash_status(user_id, file_hash)
+                            if not hash_status or hash_status['is_deleted']:
+                                logger.error(f"[接收消息] 引用的图片不存在或已被删除（file_hash: {file_hash}）")
+                                stream_id = str(int(time.time()))
+                                error_message = "您引用的文件已被清理，请重新发送"
+                                stream = MakeTextStream(stream_id, error_message, True)
+                                encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
+                                if encrypted_resp:
+                                    return encrypted_resp
+                                return "success"
                         
+                        # 验证通过，处理文件
+                        final_path = download_result['hash_path']
                         original_filename = download_result['original_filename']
                         hash_filename = download_result['hash_filename']
 
@@ -601,37 +610,8 @@ def receive_message():
 
                         quoted_image_path = final_path
                         logger.info(f"[接收消息] 引用图片已保存: {download_result}")
-
-                # 如果有引用的文件，先检查消息是否存在
-                quoted_file_path = None
-                if quoted_file_url:
-                    # 提取 media_id 并验证消息是否存在
-                    quoted_media_id = extract_media_id(quoted_file_url)
-                    
-                    if quoted_media_id:
-                        import sqlite3
-                        conn = sqlite3.connect(db_manager.db_path)
-                        cursor = conn.cursor()
-                        # 通过 media_id + user_id 精确验证
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM messages 
-                            WHERE user_id = ? AND media_id = ? AND message_type = 'file_message'
-                        """, (user_id, quoted_media_id))
-                        
-                        if cursor.fetchone()[0] == 0:
-                            conn.close()
-                            logger.error(f"[接收消息] 引用的文件消息不存在（media_id: {quoted_media_id}）")
-                            stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在，请重新发送"
-                            stream = MakeTextStream(stream_id, error_message, True)
-                            encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
-                            if encrypted_resp:
-                                return encrypted_resp
-                            return "success"
-                        conn.close()
                     else:
-                        # 无法提取 media_id，拒绝处理引用文件
-                        logger.warning(f"[接收消息] 无法从引用文件 URL 提取 media_id: {quoted_file_url}")
+                        logger.error(f"[接收消息] 下载引用图片失败: {quoted_image_url}")
                         stream_id = str(int(time.time()))
                         error_message = "您引用的消息不存在，请重新发送"
                         stream = MakeTextStream(stream_id, error_message, True)
@@ -639,22 +619,30 @@ def receive_message():
                         if encrypted_resp:
                             return encrypted_resp
                         return "success"
-                    
-                    # 消息存在，下载文件
+
+                # 如果有引用的文件，直接下载并验证（引用同一文件时media_id会变化）
+                quoted_file_path = None
+                if quoted_file_url:
+                    # 直接下载引用的文件
                     download_result = file_downloader.download_file(quoted_file_url, user_id=user_id, aes_key_base64=config.WECOM_ENCODING_AES_KEY)
+                    
                     if download_result:
-                        final_path = download_result['hash_path']
-                        # 检查文件是否存在
-                        if not os.path.exists(final_path):
-                            logger.error(f"[接收消息] 引用文件不存在: {final_path}")
-                            stream_id = str(int(time.time()))
-                            error_message = "您引用的消息不存在"
-                            stream = MakeTextStream(stream_id, error_message, True)
-                            encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
-                            if encrypted_resp:
-                                return encrypted_resp
-                            return "success"
+                        file_hash = download_result.get('file_hash')
+                        if file_hash:
+                            # 检查文件是否存在于用户的file_hashes表中且未被删除
+                            hash_status = db_manager.get_file_hash_status(user_id, file_hash)
+                            if not hash_status or hash_status['is_deleted']:
+                                logger.error(f"[接收消息] 引用的文件不存在或已被删除（file_hash: {file_hash}）")
+                                stream_id = str(int(time.time()))
+                                error_message = "您引用的文件已被清理，请重新发送"
+                                stream = MakeTextStream(stream_id, error_message, True)
+                                encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
+                                if encrypted_resp:
+                                    return encrypted_resp
+                                return "success"
                         
+                        # 验证通过，处理文件
+                        final_path = download_result['hash_path']
                         original_filename = download_result['original_filename']
                         hash_filename = download_result['hash_filename']
 
@@ -670,6 +658,15 @@ def receive_message():
 
                         quoted_file_path = final_path
                         logger.info(f"[接收消息] 引用文件已保存: {download_result}")
+                    else:
+                        logger.error(f"[接收消息] 下载引用文件失败: {quoted_file_url}")
+                        stream_id = str(int(time.time()))
+                        error_message = "您引用的消息不存在，请重新发送"
+                        stream = MakeTextStream(stream_id, error_message, True)
+                        encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
+                        if encrypted_resp:
+                            return encrypted_resp
+                        return "success"
 
                 # 检查是否是清理命令（支持模糊匹配）
                 stripped_content = text_content.strip().lower()
@@ -794,29 +791,49 @@ def receive_message():
                     text_content_with_file = text_content + file_info
                     logger.info(f"[接收消息] 附加引用文件信息到消息: {relative_path}")
                 else:
-                    # 查询数据库中最新的文件（用户上传后的后续指令）
-                    recent_file = db_manager.get_recent_file_message(user_id)
-                    if recent_file:
-                        file_path = recent_file['file_path']
-                        hash_filename = os.path.basename(file_path)
-                        
-                        # 尝试获取原始文件名
-                        original_filename = db_manager.get_original_filename(hash_filename)
-                        
-                        if original_filename:
-                            display_filename = original_filename
-                        else:
-                            display_filename = hash_filename
+                    # 检测是否是命令式文件操作语言
+                    # 只有用户明确要求对文件进行操作时，才自动附加最新文件
+                    file_command_keywords = [
+                        '分析', '总结', '写写', '描述', '说明', '解释', '翻译',
+                        '提取', '识别', '读取', '查看', '检查', '对比',
+                        '生成', '创建', '修改', '编辑', '处理', '转换',
+                        '计算', '统计', '归纳', '概括', '列举', '找出'
+                    ]
+                    
+                    should_attach_file = False
+                    for keyword in file_command_keywords:
+                        if keyword in text_content:
+                            should_attach_file = True
+                            break
+                    
+                    if should_attach_file:
+                        # 查询数据库中最新的文件（用户用命令式语言要求操作文件）
+                        recent_file = db_manager.get_recent_file_message(user_id)
+                        if recent_file:
+                            file_path = recent_file['file_path']
+                            hash_filename = os.path.basename(file_path)
+                            
+                            # 尝试获取原始文件名
+                            original_filename = db_manager.get_original_filename(hash_filename)
+                            
+                            if original_filename:
+                                display_filename = original_filename
+                            else:
+                                display_filename = hash_filename
 
-                        # 转换为相对路径（便于迁移）
-                        relative_path = to_relative_path(file_path)
-                        
-                        # 添加隐藏的文件路径标记，让 AI 能找到文件
-                        file_info = f"\n\n[文件] {display_filename}\n[FILE_PATH] {relative_path}"
-                        text_content_with_file = text_content + file_info
-                        logger.info(f"[接收消息] 附加文件信息到消息: {relative_path}")
+                            # 转换为相对路径（便于迁移）
+                            relative_path = to_relative_path(file_path)
+                            
+                            # 添加隐藏的文件路径标记，让 AI 能找到文件
+                            file_info = f"\n\n[文件] {display_filename}\n[FILE_PATH] {relative_path}"
+                            text_content_with_file = text_content + file_info
+                            logger.info(f"[接收消息] 检测到文件操作命令，附加文件信息到消息: {relative_path}")
+                        else:
+                            text_content_with_file = text_content
                     else:
+                        # 用户没有用命令式语言，不自动附加文件
                         text_content_with_file = text_content
+                        logger.info(f"[接收消息] 用户未使用命令式文件操作语言，不自动附加文件")
 
                 # 消息内容去重（60秒内相同消息不重复处理）
                 message_key = f"{user_id}:{text_content}"
@@ -846,7 +863,7 @@ def receive_message():
                     # 已有后台任务在处理，返回"正在处理"
                     # 使用任务中存储的 stream_id
                     stream_id = _task_status_cache[task_key]['stream_id']
-                    stream = MakeTextStream(stream_id, "正在处理您的请求，请稍候...", False)
+                    stream = MakeTextStream(stream_id, get_busy_message(), False)
                     encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
                     
                     with _request_cache_lock:
@@ -882,16 +899,18 @@ def receive_message():
                                 _task_status_cache[task_key]['result'] = reply_content
                     except Exception as e:
                         logger.error(f"[后台处理] 异步处理失败: {e}")
+                        import traceback
+                        logger.error(f"[后台处理] 错误堆栈:\n{traceback.format_exc()}")
                         with _task_status_lock:
                             if task_key in _task_status_cache:
                                 _task_status_cache[task_key]['status'] = 'error'
-                                _task_status_cache[task_key]['result'] = f"处理失败: {str(e)}"
+                                _task_status_cache[task_key]['result'] = f"处理失败: {str(e) if str(e) else '未知错误'}"
                 
                 # 启动后台处理线程
                 threading.Thread(target=process_in_background, daemon=True).start()
                 
-                # 立即返回"正在处理"的消息（不等待）
-                stream = MakeTextStream(stream_id, "正在处理您的请求，请稍候...", False)
+                # 立即返回"处理中"的消息（不等待）- 使用 processing message
+                stream = MakeTextStream(stream_id, get_processing_message(), False)
                 encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
                 
                 with _request_cache_lock:
@@ -949,9 +968,16 @@ def receive_message():
                                 return encrypted_resp
                             return "success"
                         else:
-                            # 还在处理中
-                            logger.info(f"[接收消息] 还在处理中")
-                            stream = MakeTextStream(stream_id, "正在处理您的请求，请稍候...", False)
+                            # 还在处理中，返回当前累积的内容（流式）
+                            accumulated_text = task.get('result', '')
+                            logger.info(f"[接收消息] 还在处理中，返回累积内容（长度: {len(accumulated_text)}）")
+                            
+                            # 如果有累积内容，返回累积内容；否则返回处理中提示
+                            if accumulated_text:
+                                stream = MakeTextStream(stream_id, accumulated_text, False)
+                            else:
+                                stream = MakeTextStream(stream_id, get_processing_message(), False)
+                            
                             encrypted_resp = EncryptMessage(receiveid, nonce, timestamp, stream)
                             if encrypted_resp:
                                 return encrypted_resp
@@ -1169,7 +1195,7 @@ def receive_message():
 
 async def process_message_and_get_reply(user_id: str, message: str):
     """
-    异步处理消息：转发给 iFlow CLI 并返回回复内容
+    异步处理消息：转发给 iFlow CLI 并返回回复内容（支持流式收集）
 
     Args:
         user_id: 用户 ID
@@ -1187,7 +1213,7 @@ async def process_message_and_get_reply(user_id: str, message: str):
         # 发送消息到 iFlow CLI
         await client.send_message(message)
 
-        # 接收 iFlow CLI 的回复
+        # 接收 iFlow CLI 的回复（流式收集）
         response_text = ""
         assistant_finished = False
 
@@ -1197,6 +1223,14 @@ async def process_message_and_get_reply(user_id: str, message: str):
                 # AssistantMessage: AI 助手回复
                 response_text += msg.chunk.text
                 logger.debug(f"[消息处理] 接收到 iFlow 回复片段: {msg.chunk.text[:50]}...")
+                
+                # 实时更新任务状态缓存（用于流式刷新）
+                task_key = user_id
+                with _task_status_lock:
+                    if task_key in _task_status_cache:
+                        _task_status_cache[task_key]['result'] = response_text
+                        logger.debug(f"[消息处理] 实时更新任务状态，当前长度: {len(response_text)}")
+                        
             elif hasattr(msg, 'stop_reason'):
                 # TaskFinishMessage: 任务完成
                 logger.info(f"[消息处理] iFlow 任务完成，原因: {msg.stop_reason}")

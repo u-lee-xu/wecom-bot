@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 import uuid
 from WXBizJsonMsgCrypt import Prpcrypt
+from database import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +99,18 @@ class FileDownloader:
                 file_size = len(file_content)
                 logger.info(f"[文件下载器] 文件已存在，复用现有文件: {file_path} ({file_size} bytes)")
 
+                # 保存文件哈希（如果用户ID存在）
+                if user_id:
+                    db_manager.save_file_hash(user_id, file_hash, filename)
+
                 # 如果存在解密版本，返回解密路径（绝对路径）
                 decrypted_path = os.path.splitext(file_path)[0] + "_decrypted" + file_ext
                 if os.path.exists(decrypted_path):
                     return {
                         'hash_path': os.path.abspath(decrypted_path),
                         'original_filename': filename,
-                        'hash_filename': os.path.basename(decrypted_path)
+                        'hash_filename': os.path.basename(decrypted_path),
+                        'file_hash': file_hash
                     }
                 
                 # 如果只存在加密文件，尝试解密
@@ -115,13 +121,15 @@ class FileDownloader:
                         return {
                             'hash_path': os.path.abspath(decrypted_path),
                             'original_filename': filename,
-                            'hash_filename': os.path.basename(decrypted_path)
+                            'hash_filename': os.path.basename(decrypted_path),
+                            'file_hash': file_hash
                         }
 
                 return {
                     'hash_path': os.path.abspath(file_path),
                     'original_filename': filename,
-                    'hash_filename': hash_filename
+                    'hash_filename': hash_filename,
+                    'file_hash': file_hash
                 }
 
             # 保存文件
@@ -154,10 +162,15 @@ class FileDownloader:
                             final_hash_filename = os.path.basename(decrypted_path)
                             logger.info(f"[文件下载器] 文件解密成功: {final_path}")
 
+            # 保存文件哈希（如果用户ID存在）
+            if user_id:
+                db_manager.save_file_hash(user_id, file_hash, filename)
+
             return {
                 'hash_path': os.path.abspath(final_path),
                 'original_filename': filename,
-                'hash_filename': final_hash_filename
+                'hash_filename': final_hash_filename,
+                'file_hash': file_hash
             }
 
         except Exception as e:

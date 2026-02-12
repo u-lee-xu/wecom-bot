@@ -84,34 +84,63 @@ class SessionManager:
 
             logger.info(f"[会话管理器] 用户 {user_id} 目录: workspace={workspace_dir}, files={files_dir}")
 
-            # 系统提示词：禁止提及技术细节和环境信息
+            # 系统提示词：禁止主动读取文件和提及技术细节
             system_prompt = """你是一个专业的AI助手。请严格遵循以下规则：
 
-1. 在回复中只关注内容本身，不要提及任何技术细节
-2. 绝对不要提及：文件格式、文件大小、文件路径、加密、解密、下载、AES密钥、哈希等技术术语
-3. 不要解释如何获取、处理或传输文件
-4. 当被问及上传了什么文件时，只列出文件名和内容主题
-5. 保持回复自然，像正常对话一样
-6. 即使看到文件名包含技术信息（如哈希值），也不要在回复中提及
-7. 绝对不要从工作目录、项目结构、文件路径等环境信息推断用户的情况或项目信息
-8. 不要提及用户的职业、工作内容或项目类型，除非用户明确告诉你
+1. 在回复中只关注用户的问题本身，不要主动分析或提及任何文件
+2. 只有在用户明确提及、引用或要求分析文件时，才能读取和引用文件内容
+3. 绝对不要主动读取、分析或描述用户之前上传但未提及的文件
+4. 绝对不要提及：文件格式、文件大小、文件路径、加密、解密、下载、AES密钥、哈希等技术术语
+5. 不要解释如何获取、处理或传输文件
+6. 当被问及上传了什么文件时，只列出文件名和内容主题
+7. 保持回复自然，像正常对话一样
+8. 即使看到文件名包含技术信息（如哈希值），也不要在回复中提及
+9. 绝对不要从工作目录、项目结构、文件路径等环境信息推断用户的情况或项目信息
+10. 不要提及用户的职业、工作内容或项目类型，除非用户明确告诉你
 
-【重要原则】：除非用户在对话中明确提供信息，否则不要做任何关于用户身份、工作或项目的假设或推断。
+【重要原则】：
+- 除非用户在对话中明确提及或要求，否则不要读取任何文件
+- 不要主动分析用户上传但未在当前消息中提及的文件
+- 除非用户在对话中明确提供信息，否则不要做任何关于用户身份、工作或项目的假设或推断
 
-【文件路径说明】当用户上传文件或引用文件时，消息中会包含 [FILE_PATH] 标记，该标记后面的路径是相对于项目根目录的相对路径（如 user_data/xxx/files/xxx.jpg），iFlow SDK 会自动解析为绝对路径。不要在回复中提及这个路径或 [FILE_PATH] 标记。"""
+【文件访问规则】：
+当用户消息中包含 [FILE_PATH] 标记时，表示用户明确引用了该文件，你可以读取并分析该文件。
+当用户消息中没有提及任何文件时，不要主动读取任何文件。
+
+【文件路径说明】：当用户上传文件或引用文件时，消息中会包含 [FILE_PATH] 标记，该标记后面的路径是相对于项目根目录的相对路径（如 user_data/xxx/files/xxx.jpg），iFlow SDK 会自动解析为绝对路径。不要在回复中提及这个路径或 [FILE_PATH] 标记。"""
 
             # 创建会话设置
             session_settings = SessionSettings(system_prompt=system_prompt)
 
+            # 获取用户未删除的文件列表（软删除排除）
+            # 查询所有未被删除的文件
+            import os
+            allowed_files = []
+            user_files_dir = os.path.join(project_root, 'user_data', user_id, 'files')
+            deleted_dir = os.path.join(user_files_dir, 'deleted')
+            
+            if os.path.exists(user_files_dir):
+                for filename in os.listdir(user_files_dir):
+                    filepath = os.path.join(user_files_dir, filename)
+                    # 排除 deleted 目录
+                    if os.path.isdir(filepath) and filename == 'deleted':
+                        continue
+                    # 只包含文件
+                    if os.path.isfile(filepath):
+                        # 转换为相对路径（相对于 project_root）
+                        rel_path = os.path.relpath(filepath, project_root)
+                        allowed_files.append(rel_path)
+            
+            logger.info(f"[会话管理器] 用户 {user_id} 允许访问的文件数: {len(allowed_files)}")
+            
             # 为每个用户创建独立的会话配置
             # 使用项目根目录作为 cwd，便于迁移
-            # 通过 file_allowed_dirs 允许访问用户的 files 目录（使用相对路径）
-            # 相对路径会自动解析为绝对路径
+            # 默认禁用文件访问，防止AI主动读取文件
+            # 只有在用户明确引用文件时（消息中包含[FILE_PATH]），才应该通过工具读取文件
             options = IFlowOptions(
                 session_id=session_id,
                 cwd=project_root,
-                file_access=True,
-                file_allowed_dirs=[f'user_data/{user_id}/files'],
+                file_access=False,  # 默认禁用文件访问，防止AI主动读取文件
                 file_read_only=True,
                 auto_start_process=True,
                 session_settings=session_settings

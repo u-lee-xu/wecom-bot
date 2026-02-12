@@ -477,6 +477,135 @@ class DatabaseManager:
             logger.error(f"[数据库] 获取文件映射失败: {e}")
             return []
 
+    def save_file_hash(self, user_id: str, file_hash: str, original_filename: str):
+        """
+        保存文件哈希（软删除系统）
+
+        Args:
+            user_id: 用户 ID
+            file_hash: 文件内容的 SHA256 哈希（前16位）
+            original_filename: 原始文件名
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 检查是否已存在
+                cursor.execute("""
+                    SELECT is_deleted FROM file_hashes
+                    WHERE user_id = ? AND file_hash = ?
+                """, (user_id, file_hash))
+
+                existing = cursor.fetchone()
+
+                if existing:
+                    # 如果存在但已删除，更新为未删除状态
+                    if existing[0] == 1:
+                        cursor.execute("""
+                            UPDATE file_hashes
+                            SET is_deleted = 0, deleted_at = NULL
+                            WHERE user_id = ? AND file_hash = ?
+                        """, (user_id, file_hash))
+                        logger.info(f"[数据库] 文件哈希已恢复: {user_id}/{file_hash}")
+                else:
+                    # 插入新记录
+                    cursor.execute("""
+                        INSERT INTO file_hashes (user_id, file_hash, original_filename)
+                        VALUES (?, ?, ?)
+                    """, (user_id, file_hash, original_filename))
+                    logger.info(f"[数据库] 文件哈希已保存: {user_id}/{file_hash}")
+
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"[数据库] 保存文件哈希失败: {e}")
+
+    def get_file_hash_status(self, user_id: str, file_hash: str) -> Optional[dict]:
+        """
+        获取文件哈希状态
+
+        Args:
+            user_id: 用户 ID
+            file_hash: 文件哈希
+
+        Returns:
+            文件哈希信息字典，如果不存在则返回 None
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, user_id, file_hash, original_filename, is_deleted, created_at
+                    FROM file_hashes
+                    WHERE user_id = ? AND file_hash = ?
+                """, (user_id, file_hash))
+
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'id': result[0],
+                        'user_id': result[1],
+                        'file_hash': result[2],
+                        'original_filename': result[3],
+                        'is_deleted': result[4],
+                        'created_at': result[5]
+                    }
+                return None
+
+        except Exception as e:
+            logger.error(f"[数据库] 获取文件哈希状态失败: {e}")
+            return None
+
+    def mark_file_as_deleted(self, user_id: str, file_hash: str):
+        """
+        标记文件为已删除（软删除）
+
+        Args:
+            user_id: 用户 ID
+            file_hash: 文件哈希
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE file_hashes
+                    SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND file_hash = ?
+                """, (user_id, file_hash))
+                
+                if cursor.rowcount > 0:
+                    logger.info(f"[数据库] 文件已标记为删除: {user_id}/{file_hash}")
+                else:
+                    logger.warning(f"[数据库] 未找到文件哈希记录: {user_id}/{file_hash}")
+
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"[数据库] 标记文件为删除失败: {e}")
+
+    def mark_user_files_as_deleted(self, user_id: str):
+        """
+        标记用户所有文件为已删除（软删除）
+
+        Args:
+            user_id: 用户 ID
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE file_hashes
+                    SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND is_deleted = 0
+                """, (user_id,))
+                
+                deleted_count = cursor.rowcount
+                logger.info(f"[数据库] 已标记 {deleted_count} 个文件为删除: {user_id}")
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"[数据库] 批量标记文件为删除失败: {e}")
+
 
 # 全局数据库管理器实例
 db_manager = DatabaseManager()
